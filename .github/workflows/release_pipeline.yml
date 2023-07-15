@@ -1,0 +1,87 @@
+# This is a GitHub Actions pipeline for release
+name: Release
+on:
+  push:
+    tags:
+      - 'v*' # Trigger on tag like v<number>
+jobs:
+  create-issue:
+    permissions: write-all
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Get tag name
+        id: tag
+        run: echo "TAG=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+
+      - name: Get previous tag name
+        id: prev-tag
+        run: |
+          prev_tag=$(git describe --abbrev=0 --tags ${GITHUB_REF#refs/tags/}^ 2> /dev/null || git rev-list --max-parents=0 --first-parent HEAD)
+          echo "PREV_TAG=$prev_tag" >> $GITHUB_ENV
+
+      - name: Get tag's author
+        run: echo "TAG_AUTHOR=$(git show -s --format='%an' $TAG)" >> $GITHUB_ENV
+
+      - name: "Build Changelog"
+        id: build_changelog
+        uses: mikepenz/release-changelog-builder-action@v4.0.0-rc03
+        with:
+          commitMode: true
+          fromTag: ${{env.PREV_TAG}}
+          toTag: ${{env.TAG}}
+      
+      - name: Find comment with existing tag
+        uses: peter-evans/find-comment@v2
+        id: fc
+        with:
+          issue-number: 5
+          body-includes: "Release version: ${{ env.TAG}}"
+
+      - name: Update comment if release exists
+        if: steps.fc.outputs.comment-id != ''
+        id: update
+        uses: peter-evans/create-or-update-comment@v3
+        with:
+          edit-mode: replace
+          issue-number: 5
+          comment-id: ${{ steps.fc.outputs.comment-id }}
+          body: |
+            Release version: ${{env.TAG}}
+            Author: ${{env.TAG_AUTHOR}}
+            ## Changlelog
+            ${{steps.build_changelog.outputs.changelog}}
+            
+      - name: Create comment if no such release exists
+        if: steps.fc.outputs.comment-id == ''
+        id: create
+        uses: peter-evans/create-or-update-comment@v3
+        with:
+          issue-number: 5
+          body: |
+            Release version: ${{env.TAG}}
+            Author: ${{env.TAG_AUTHOR}}
+            ## Changlelog
+            ${{steps.build_changelog.outputs.changelog}}
+
+        
+  run-checkPR:
+    needs: create-issue # Wait for the create-issue job to finish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+      - name: Run checkPR pipeline
+        uses: ./.github/workflows/checkPR.yml # Use another yml file for the checkPR pipeline
+      - name: Put result to issue
+        uses: peter-evans/create-or-update-comment@v1
+        with:
+          issue-number: ${{ needs.create-issue.outputs.number }}
+          body: |
+            ## CheckPR result
+            ${{ steps.checkPR.outputs.result }} # Get the output of the checkPR pipeline
+

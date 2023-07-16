@@ -20,27 +20,31 @@ jobs:
 
       - name: Get previous tag name
         id: prev-tag
-        run: |
-          prev_tag=$(git describe --abbrev=0 --tags ${GITHUB_REF#refs/tags/}^ 2> /dev/null || git rev-list --max-parents=0 --first-parent HEAD)
-          echo "PREV_TAG=$prev_tag" >> $GITHUB_ENV
+        run: 
+          echo "PREV_TAG=$(git describe --abbrev=0 --tags ${GITHUB_REF#refs/tags/}^)" >> $GITHUB_ENV
 
       - name: Get tag's author
         run: echo "TAG_AUTHOR=$(git show -s --format='%an' $TAG)" >> $GITHUB_ENV
-
-      - name: "Build Changelog"
-        id: build_changelog
-        uses: mikepenz/release-changelog-builder-action@v4.0.0-rc03
-        with:
-          commitMode: true
-          fromTag: ${{env.PREV_TAG}}
-          toTag: ${{env.TAG}}
       
+      - name: Get tag's date
+        run: echo "TAG_DATE=$( git log -1 --simplify-by-decoration --pretty="format:%ci" ${{env.TAG}})" >> $GITHUB_ENV
+      - name: Get changelog
+        run: |
+          export PREV_TAG="${{env.PREV_TAG}}"
+          if [[ -z "$PREV_TAG" ]]; then
+            git --no-pager log --pretty=format:"- %s" ${{env.TAG}} > changelog.txt
+          else
+            git --no-pager log --pretty=format:"- %s" ${{env.PREV_TAG}}..${{env.TAG}} > changelog.txt
+          fi
+          sleep 1s
+          cat changelog.txt
+
       - name: Find comment with existing tag
         uses: peter-evans/find-comment@v2
         id: fc
         with:
           issue-number: 5
-          body-includes: "Release version: ${{ env.TAG}}"
+          body-includes: "Version: ${{ env.TAG}}"
 
       - name: Update comment if release exists
         if: steps.fc.outputs.comment-id != ''
@@ -51,10 +55,10 @@ jobs:
           issue-number: 5
           comment-id: ${{ steps.fc.outputs.comment-id }}
           body: |
-            Release version: ${{env.TAG}}
+            Version: ${{env.TAG}}
+            Date: ${{env.TAG_DATE}}
             Author: ${{env.TAG_AUTHOR}}
-            ## Changlelog
-            ${{steps.build_changelog.outputs.changelog}}
+            ## Changelog
             
       - name: Create comment if no such release exists
         if: steps.fc.outputs.comment-id == ''
@@ -63,10 +67,28 @@ jobs:
         with:
           issue-number: 5
           body: |
-            Release version: ${{env.TAG}}
+            Version: ${{env.TAG}}
+            Date: ${{env.TAG_DATE}}
             Author: ${{env.TAG_AUTHOR}}
-            ## Changlelog
-            ${{steps.build_changelog.outputs.changelog}}
+            ## Changelog
+
+      - name: Append changelog to created
+        if: steps.fc.outputs.comment-id == ''
+        uses: peter-evans/create-or-update-comment@v3
+        with:
+          comment-id: ${{ steps.create.outputs.comment-id}}
+          edit-mode: append
+          issue-number: 5
+          body-path: changelog.txt
+        
+      - name: Append changelog to updated
+        if: steps.fc.outputs.comment-id != ''
+        uses: peter-evans/create-or-update-comment@v3
+        with:
+          comment-id: ${{ steps.update.outputs.comment-id}}
+          edit-mode: append
+          issue-number: 5
+          body-path: changelog.txt
 
         
   run-checkPR:

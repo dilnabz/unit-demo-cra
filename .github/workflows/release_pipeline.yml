@@ -1,11 +1,12 @@
-# This is a GitHub Actions pipeline for release
 name: Release
 on:
   push:
     tags:
-      - 'v*' # Trigger on tag like v<number>
+      - 'v*'
 jobs:
-  create-issue:
+  update-release-issue:
+    outputs:
+      comment_id: ${{steps.save_id.outputs.id}}
     permissions: write-all
     runs-on: ubuntu-latest
     steps:
@@ -90,21 +91,35 @@ jobs:
           issue-number: 5
           body-path: changelog.txt
 
+      - name: Save comment id to output
+        id: save_id
+        run: |
+          id1="${{steps.create.outputs.comment-id}}"
+          id2="${{steps.update.outputs.comment-id}}"
+          if [[ -z "$id1" ]]; then
+            echo "id=$id1" >> GITHUB_OUTPUT
+          else
+            echo "id=$id2" >> GITHUB_OUTPUT
+          fi
         
-  run-checkPR:
-    needs: create-issue # Wait for the create-issue job to finish
+  run-autotest:
+    uses: ./.github/workflows/autotests.yml
+
+  get-autotests-result:
+    permissions: write-all
     runs-on: ubuntu-latest
+    if: always()
+    needs: [run-autotest, update-release-issue] 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v2
-      - name: Run checkPR pipeline
-        uses: ./.github/workflows/checkPR.yml # Use another yml file for the checkPR pipeline
-      - name: Put result to issue
-        uses: peter-evans/create-or-update-comment@v1
-        with:
-          issue-number: ${{ needs.create-issue.outputs.number }}
-          body: |
-            ## CheckPR result
-            ${{ steps.checkPR.outputs.result }} # Get the output of the checkPR pipeline
+    - name: Put result to issue
+      uses: peter-evans/create-or-update-comment@v3
+      with:
+        issue-number: 5
+        comment-id: ${{ needs.update-release-issue.outputs.comment_id }} 
+        edit-mode: append
+        body: |
+          ## Autotests result
+          ${{needs.run-autotest.result}}
 
 #asdfj;lasdfj;asd
+#idafdfasdf
